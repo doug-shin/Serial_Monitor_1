@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 """
-SM1 - Serial Monitor v0.5
+SM1 - Serial Monitor v0.6
 PyQt5 기반 시리얼 모니터
 모던하고 안정적인 GUI
 """
 
-__version__ = "0.5"
+__version__ = "0.6"
 __author__ = "Serial Monitor Team"
 
 import sys
@@ -55,25 +55,24 @@ class SerialWorker(QObject):
                     data = self.serial_port.read(self.serial_port.in_waiting)
                     buffer.extend(data)
                     
-                    # STX(0x02) 찾기
-                    while b'\x02' in buffer:
-                        stx_idx = buffer.index(b'\x02')
+                    # 고정 길이 프레임 파싱 (더 안정적)
+                    while len(buffer) >= 7:
+                        # STX로 시작하는 프레임 찾기
+                        stx_found = False
+                        for i in range(len(buffer) - 6):
+                            if buffer[i] == 0x02 and len(buffer) >= i + 7:
+                                # 7바이트 프레임 후보
+                                potential_frame = buffer[i:i+7]
+                                if potential_frame[6] == 0x03:  # ETX 확인
+                                    frame = potential_frame
+                                    self.parse_frame(frame)
+                                    buffer = buffer[i+7:]  # 처리한 프레임 제거
+                                    stx_found = True
+                                    break
                         
-                        # ETX(0x03) 찾기
-                        if b'\x03' in buffer[stx_idx:]:
-                            etx_idx = buffer.index(b'\x03', stx_idx)
-                            
-                            # 프레임 추출 (STX ~ ETX)
-                            frame = buffer[stx_idx:etx_idx+1]
-                            
-                            # 프레임 파싱
-                            if len(frame) == 7:  # Master -> SCADA 프로토콜 (7바이트)
-                                self.parse_frame(frame)
-                            
-                            # 처리한 데이터 제거
-                            buffer = buffer[etx_idx+1:]
-                        else:
-                            break  # ETX가 없으면 더 기다림
+                        if not stx_found:
+                            # STX를 찾지 못했으면 첫 바이트 제거하고 계속
+                            buffer = buffer[1:]
                             
                 self.msleep(10)  # 10ms 대기
                 
@@ -85,29 +84,32 @@ class SerialWorker(QObject):
         """바이너리 프레임 파싱"""
         try:
             if len(frame) != 7:
+                print(f"Invalid frame length: {len(frame)} - Frame: {frame.hex()}")
                 return
                 
             # 체크섬 검증 (활성화된 경우만)
             checksum_calc = sum(frame[1:5]) & 0xFF
             checksum_recv = frame[5]
             
-            if self.parent_app and self.parent_app.checksum_enabled and checksum_calc != checksum_recv:
-                print(f"Checksum error: calc={checksum_calc:02X}, recv={checksum_recv:02X}")
-                return
-            elif self.parent_app and not self.parent_app.checksum_enabled:
-                print(f"Checksum verification disabled - calc={checksum_calc:02X}, recv={checksum_recv:02X}")
-                
-            # ID 및 상태 비트 추출
+            # ID 및 상태 비트 추출 (체크섬 검증 전에 미리 추출)
             byte1 = frame[1]
             slave_id = (byte1 >> 3) & 0x1F  # 상위 5비트
             dab_ok = byte1 & 0x01  # 최하위 비트
             
-            timestamp = datetime.now().strftime("%H:%M:%S")
+            if self.parent_app and self.parent_app.checksum_enabled and checksum_calc != checksum_recv:
+                print(f"⚠️  Checksum error - ID={slave_id}: calc={checksum_calc:02X}, recv={checksum_recv:02X}, frame={frame.hex()}")
+                return
+            elif self.parent_app and not self.parent_app.checksum_enabled:
+                # 체크섬 비활성화 시에는 로그 줄이기
+                pass
+                
+            timestamp = datetime.now().strftime("%H:%M:%S.%f")[:-5]  # 0.1초 단위까지 표시
             
             if slave_id == 0:
                 # ID=0: 시스템 전압
                 voltage_raw = struct.unpack('>h', frame[2:4])[0]  # signed int16
                 voltage = voltage_raw / 10.0  # 10배 스케일링
+                print(f"📊 System Voltage: {voltage:.1f}V at {timestamp}")
                 self.system_voltage_received.emit(voltage, timestamp)
             else:
                 # ID≠0: Slave 데이터
@@ -117,10 +119,12 @@ class SerialWorker(QObject):
                 temp_raw = frame[4]
                 temp = temp_raw * 0.5  # 0.5도 단위
                 
+                # 각 모듈별 수신 로그 (간결하게)
+                print(f"📡 ID{slave_id:2d}: {current:6.2f}A, {temp:4.1f}°C, DAB={dab_ok} at {timestamp}")
                 self.slave_data_received.emit(slave_id, current, temp, bool(dab_ok), timestamp)
                 
         except Exception as e:
-            print(f"Parse error: {e} - Frame: {frame.hex()}")
+            print(f"❌ Parse error: {e} - Frame: {frame.hex()}")
             
     def msleep(self, ms):
         """밀리초 대기"""
@@ -137,7 +141,6 @@ class SerialMonitorApp(QMainWindow):
         self.packet_count = 0
         self.system_voltage = 0.0  # 시스템 전압 저장
         self.system_current = 0.0  # 시스템 전류 합계
-        self.is_running = False  # 동작 상태
         self.values_changed = False  # 입력값 변경 여부
         self.original_spinbox_style = ""  # 원래 스핀박스 스타일
         self.has_received_data = False  # 데이터 수신 여부
@@ -261,7 +264,7 @@ class SerialMonitorApp(QMainWindow):
         self.max_voltage_spinbox.setRange(0.0, 1000.0)  # 양수만
         self.max_voltage_spinbox.setDecimals(1)
         self.max_voltage_spinbox.setSuffix(" V")
-        self.max_voltage_spinbox.setValue(300.0)
+        self.max_voltage_spinbox.setValue(500.0)
         self.max_voltage_spinbox.setAlignment(Qt.AlignRight)  # 우측 정렬
         # 폰트 크기 증가
         spinbox_font = self.max_voltage_spinbox.font()
@@ -308,7 +311,7 @@ class SerialMonitorApp(QMainWindow):
         self.original_spinbox_style = self.max_voltage_spinbox.styleSheet()
         
         # 원래 값 저장
-        self.original_values[self.max_voltage_spinbox] = 300.0
+        self.original_values[self.max_voltage_spinbox] = 500.0
         self.original_values[self.min_voltage_spinbox] = 0.0
         self.original_values[self.current_spinbox] = 0.0
         
@@ -317,7 +320,7 @@ class SerialMonitorApp(QMainWindow):
         self.min_voltage_spinbox.valueChanged.connect(lambda value: self.on_value_changed(self.min_voltage_spinbox, value))
         self.current_spinbox.valueChanged.connect(lambda value: self.on_value_changed(self.current_spinbox, value))
         
-        self.start_btn = QPushButton("Run")
+        self.start_btn = QPushButton("Command")
         # 폰트 크기 증가
         start_font = self.start_btn.font()
         start_font.setPointSize(start_font.pointSize() + 2)
@@ -365,7 +368,7 @@ class SerialMonitorApp(QMainWindow):
         # ===========================================
         # 3. 통계 정보
         # ===========================================
-        self.stats_label = QLabel("Packets: 0 | Connected: No | Modules: 0")
+        self.stats_label = QLabel("Connected: No | Modules: 0 | Packets: 0")
         self.stats_label.setStyleSheet("QLabel { background-color: #E3F2FD; padding: 8px; border: 1px solid #BBDEFB; }")
         layout.addWidget(self.stats_label)
         
@@ -379,18 +382,16 @@ class SerialMonitorApp(QMainWindow):
         self.table.setColumnCount(5)
         self.table.setHorizontalHeaderLabels(['ID', 'DAB_OK', 'Current (A)', 'Temp (°C)', 'Update'])
         
-        # 테이블 설정 - 전체 너비를 채우도록 설정
+        # 테이블 설정 - 사용자가 컬럼 너비를 조절할 수 있도록 설정
         header = self.table.horizontalHeader()
-        header.setSectionResizeMode(0, QHeaderView.Fixed)  # ID
-        header.setSectionResizeMode(1, QHeaderView.Fixed)  # DAB_OK
-        header.setSectionResizeMode(2, QHeaderView.Stretch)  # Current - 늘어남
-        header.setSectionResizeMode(3, QHeaderView.Stretch)  # Temp - 늘어남
-        header.setSectionResizeMode(4, QHeaderView.Fixed)  # Update
+        header.setSectionResizeMode(QHeaderView.Interactive)  # 모든 컬럼을 사용자가 조절 가능하게
         
-        self.table.setColumnWidth(0, 40)   # ID
-        self.table.setColumnWidth(1, 70)   # DAB_OK
-        # Current, Temp는 Stretch로 자동 조정됨
-        self.table.setColumnWidth(4, 120)  # Update (1.5배 크기)
+        # 초기 컬럼 너비 설정 (이전 Stretch 모드와 유사한 크기)
+        self.table.setColumnWidth(0, 60)   # ID
+        self.table.setColumnWidth(1, 100)   # DAB_OK
+        self.table.setColumnWidth(2, 240)  # Current (A) - 더 넓게
+        self.table.setColumnWidth(3, 240)  # Temp (°C) - 더 넓게
+        self.table.setColumnWidth(4, 120)  # Update
         
         # 테이블 정렬 설정
         header.setDefaultAlignment(Qt.AlignCenter)  # 헤더 중앙정렬
@@ -418,14 +419,14 @@ class SerialMonitorApp(QMainWindow):
         
         # + 버튼 (모듈 추가)
         add_btn = QPushButton("+")
-        add_btn.setFixedSize(30, 30)
+        add_btn.setFixedSize(60, 30)
         add_btn.setToolTip("Add Test Module")
         add_btn.clicked.connect(self.add_test_module)
         btn_layout.addWidget(add_btn)
         
         # - 버튼 (모듈 제거)
         remove_btn = QPushButton("-")
-        remove_btn.setFixedSize(30, 30)
+        remove_btn.setFixedSize(60, 30)
         remove_btn.setToolTip("Remove Last Module")
         remove_btn.clicked.connect(self.remove_last_module)
         btn_layout.addWidget(remove_btn)
@@ -448,6 +449,12 @@ class SerialMonitorApp(QMainWindow):
         # 모듈 데이터 저장용
         self.module_rows = {}  # slave_id -> row_index
         self.module_currents = {}  # slave_id -> current_value (전류 합계용)
+        self.module_last_update = {}  # slave_id -> last_update_time (수신 시간 추적)
+        
+        # DAB_OK 상태 체크 타이머 (1초마다)
+        self.status_timer = QTimer()
+        self.status_timer.timeout.connect(self.check_module_status)
+        self.status_timer.start(1000)  # 1초마다 체크
         
     def add_slave_module(self, slave_id, current, temp, dab_ok, timestamp):
         """슬레이브 모듈 데이터 추가/업데이트"""
@@ -459,6 +466,9 @@ class SerialMonitorApp(QMainWindow):
         
         row = self.module_rows[slave_id]
         
+        # 마지막 업데이트 시간 기록 (현재 시간)
+        self.module_last_update[slave_id] = time.time()
+        
         # 데이터 업데이트 (열 순서 변경: ID, DAB_OK, Current, Temp, Update)
         
         # ID (중앙정렬)
@@ -466,22 +476,22 @@ class SerialMonitorApp(QMainWindow):
         id_item.setTextAlignment(Qt.AlignCenter)
         self.table.setItem(row, 0, id_item)
         
-        # DAB_OK (중앙정렬)
+        # DAB_OK (중앙정렬) - 실시간 데이터이므로 정상 색상으로 표시
         dab_item = QTableWidgetItem("✓" if dab_ok else "✗")
         dab_item.setTextAlignment(Qt.AlignCenter)
         if dab_ok:
-            dab_item.setBackground(QColor(200, 255, 200))
+            dab_item.setBackground(QColor(200, 255, 200))  # 녹색
         else:
-            dab_item.setBackground(QColor(255, 200, 200))
+            dab_item.setBackground(QColor(255, 200, 200))  # 빨간색
         self.table.setItem(row, 1, dab_item)
         
         # Current (우측 여백 1.5배 증가)
-        current_item = QTableWidgetItem(f"{current:.2f} A                        ")
+        current_item = QTableWidgetItem(f"{current:.2f} A                 ")
         current_item.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
         self.table.setItem(row, 2, current_item)
         
         # Temp (우측 여백 1.5배 증가)
-        temp_item = QTableWidgetItem(f"{temp:.1f} °C                        ")
+        temp_item = QTableWidgetItem(f"{temp:.1f} °C                 ")
         temp_item.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
         self.table.setItem(row, 3, temp_item)
         
@@ -493,6 +503,51 @@ class SerialMonitorApp(QMainWindow):
         # 모듈 전류 저장 및 시스템 전류 합계 업데이트
         self.module_currents[slave_id] = current
         self.update_system_current()
+        
+    def check_module_status(self):
+        """모듈 상태 체크 - 1초 이상 업데이트가 없으면 회색으로 표시, 5초 이상이면 값 초기화"""
+        if not self.connected:
+            return
+            
+        current_time = time.time()
+        
+        for slave_id, row in self.module_rows.items():
+            if slave_id in self.module_last_update:
+                time_since_update = current_time - self.module_last_update[slave_id]
+                
+                # 1초 이상 업데이트가 없으면 회색으로 변경
+                if time_since_update >= 1.0:
+                    dab_item = self.table.item(row, 1)  # DAB_OK 컬럼
+                    if dab_item:
+                        dab_item.setBackground(QColor(200, 200, 200))  # 회색
+                
+                # 5초 이상 업데이트가 없으면 해당 모듈의 값을 초기화
+                if time_since_update >= 5.0:
+                    # Current를 0.00으로 초기화
+                    current_item = self.table.item(row, 2)
+                    if current_item:
+                        current_item.setText("0.00 A                 ")
+                    
+                    # Temp를 0.0으로 초기화
+                    temp_item = self.table.item(row, 3)
+                    if temp_item:
+                        temp_item.setText("0.0 °C                 ")
+                    
+                    # DAB_OK를 ✗로 초기화 (회색 배경 유지)
+                    dab_item = self.table.item(row, 1)
+                    if dab_item:
+                        dab_item.setText("✗")
+                        dab_item.setBackground(QColor(200, 200, 200))  # 회색 유지
+                    
+                    # Update time을 "--:--:--"로 초기화
+                    update_item = self.table.item(row, 4)
+                    if update_item:
+                        update_item.setText("--:--:--")
+                    
+                    # 해당 모듈의 전류를 0으로 초기화하고 시스템 전류 업데이트
+                    if slave_id in self.module_currents:
+                        self.module_currents[slave_id] = 0.0
+                        self.update_system_current()
         
     def create_initial_modules(self):
         """초기 실행시 10개 모듈 생성"""
@@ -705,7 +760,7 @@ class SerialMonitorApp(QMainWindow):
     
     def update_stats(self):
         """통계 정보 업데이트"""
-        self.stats_label.setText(f"Packets: {self.packet_count} | Connected: {'Yes' if self.connected else 'No'} | Modules: {len(self.module_rows)}")
+        self.stats_label.setText(f"Connected: {'Yes' if self.connected else 'No'} | Modules: {len(self.module_rows)} | Packets: {self.packet_count}")
         
     def add_test_module(self):
         """테스트 모듈 추가 (수동으로만)"""
@@ -735,6 +790,8 @@ class SerialMonitorApp(QMainWindow):
         del self.module_rows[max_id]
         if max_id in self.module_currents:
             del self.module_currents[max_id]
+        if max_id in self.module_last_update:
+            del self.module_last_update[max_id]
             
         # 나머지 모듈들의 row 인덱스 업데이트
         for module_id, module_row in self.module_rows.items():
@@ -751,6 +808,7 @@ class SerialMonitorApp(QMainWindow):
         self.table.setRowCount(0)
         self.module_rows.clear()
         self.module_currents.clear()
+        self.module_last_update.clear()
         self.packet_count = 0
         
         # 초기 10개 모듈 생성
@@ -773,17 +831,16 @@ class SerialMonitorApp(QMainWindow):
             self.system_current_label.setText("---          ")
             self.system_current_label.setStyleSheet("QLabel { font-weight: bold; color: #9E9E9E; }")  # 회색
         
-        self.stats_label.setText("Packets: 0 | Connected: No | Modules: 10")
+        self.stats_label.setText("Connected: No | Modules: 10 | Packets: 0")
         
         # 상태 초기화
-        self.is_running = False
         self.values_changed = False
         self.changed_spinboxes.clear()
-        self.start_btn.setText("Run")
+        self.start_btn.setText("Command")
         self.restore_spinbox_colors()
         
         # 원래 값 초기화
-        self.original_values[self.max_voltage_spinbox] = 300.0
+        self.original_values[self.max_voltage_spinbox] = 500.0
         self.original_values[self.min_voltage_spinbox] = 0.0
         self.original_values[self.current_spinbox] = 0.0
         
@@ -791,9 +848,6 @@ class SerialMonitorApp(QMainWindow):
         
     def on_value_changed(self, spinbox, value):
         """입력값 변경 시 호출되는 함수 (개별 스핀박스용)"""
-        if not self.is_running:
-            return  # Running 상태가 아니면 무시
-            
         # 원래 값과 비교
         original_value = self.original_values.get(spinbox, 0.0)
         if abs(value - original_value) < 0.01:  # 원래 값으로 돌아왔을 때
@@ -827,7 +881,7 @@ class SerialMonitorApp(QMainWindow):
         # 모든 변경사항이 복원되었으면 버튼 텍스트 원복
         if not self.changed_spinboxes:
             self.values_changed = False
-            self.start_btn.setText("Running")
+            self.start_btn.setText("Command")
             
     def on_checksum_changed(self, value):
         """체크섬 설정 변경"""
@@ -853,8 +907,8 @@ class SerialMonitorApp(QMainWindow):
             max_voltage_raw = int(abs(self.max_voltage_spinbox.value()))
             frame[2:4] = struct.pack('>h', max_voltage_raw)  # signed int16
             
-            # 전압 하한 지령 (2바이트, 스케일링 없음) - 양수
-            min_voltage_raw = int(self.min_voltage_spinbox.value())
+            # 전압 하한 지령 (2바이트, 스케일링 없음) - 항상 양수
+            min_voltage_raw = int(abs(self.min_voltage_spinbox.value()))
             frame[4:6] = struct.pack('>h', min_voltage_raw)  # signed int16
             
             # 전류 지령 (1바이트, 스케일링 없음, -128~+127)
@@ -872,9 +926,8 @@ class SerialMonitorApp(QMainWindow):
             self.serial_worker.serial_port.write(frame)
             
             # 상태 업데이트
-            self.is_running = True
             self.values_changed = False
-            self.start_btn.setText("Running")
+            self.start_btn.setText("Command")
             self.restore_spinbox_colors()
             
             # 현재 값들을 새로운 원래 값으로 설정
@@ -915,9 +968,8 @@ class SerialMonitorApp(QMainWindow):
             self.serial_worker.serial_port.write(frame)
             
             # 상태 업데이트
-            self.is_running = False
             self.values_changed = False
-            self.start_btn.setText("Run")
+            self.start_btn.setText("Command")
             self.restore_spinbox_colors()
             
             print(f"Stop command sent: All values set to 0, Checksum=0x{checksum:02X}")
@@ -930,6 +982,11 @@ class SerialMonitorApp(QMainWindow):
         """프로그램 종료시 정리"""
         if self.connected:
             self.disconnect_serial()
+        
+        # 타이머 정리
+        if hasattr(self, 'status_timer'):
+            self.status_timer.stop()
+            
         event.accept()
 
 def main():

@@ -1,7 +1,7 @@
 #!/bin/bash
 # Simple build script for macOS/Linux
 
-echo "=== SM1 - Serial Monitor v0.5 Build Script ==="
+echo "=== SM1 - Serial Monitor v0.6 Build Script ==="
 
 # Check if Python and required packages are installed
 python3 -c "import PyQt5, pyserial, PyInstaller" 2>/dev/null || {

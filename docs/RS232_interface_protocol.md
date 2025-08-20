@@ -29,7 +29,7 @@
 | 0 | STX | Start of Text | 0x02 | - |
 | 1 | Command | 0x00: Stop<br>0x01: Start | uint8 | 0~1 |
 | 2-3 | Max Voltage | Big-endian<br>No scaling | int16 | 0 ~ +1000 V |
-| 4-5 | Min Voltage | Big-endian<br>No scaling | int16 | -1000 ~ 0 V |
+| 4-5 | Min Voltage | Big-endian<br>No scaling | int16 | 0 ~ +1000 V |
 | 6 | Current Command | Per module<br>No scaling | int8 | -128 ~ +127 A |
 | 7 | Checksum | Sum(Byte1~6) & 0xFF | uint8 | 0~255 |
 | 8 | ETX | End of Text | 0x03 | - |
@@ -52,7 +52,7 @@
 - SCADA → Master: Sum(Byte1~6) & 0xFF
 
 ## 5. 통신 파라미터
-- Baud Rate: 115200 bps (기본값)
+- Baud Rate: 38400 bps (기본값)
 - Data Bits: 8
 - Stop Bits: 1
 - Parity: None
