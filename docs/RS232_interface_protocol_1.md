@@ -1,4 +1,4 @@
-# RS232 Interface 프로토콜 명세서
+# RS232 Interface 프로토콜 명세서 1.0
 
 ## 1. Master → SCADA (7 bytes)
 

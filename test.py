@@ -37,9 +37,9 @@ class BinaryProtocolSender:
         frame[0] = 0x02  # STX
         frame[1] = 0x00  # ID=0
         
-        # 전압 (10배 스케일링)
+        # 전압 (10배 스케일링, signed int16로 수정)
         voltage_raw = int(voltage * 10)
-        frame[2:4] = struct.pack('>H', voltage_raw)
+        frame[2:4] = struct.pack('>h', voltage_raw)
         
         frame[4] = 0x00  # 예약
         frame[5] = self.calculate_checksum(frame)
@@ -57,9 +57,10 @@ class BinaryProtocolSender:
         # ID(5비트) + 예약(2비트) + DAB_OK(1비트)
         frame[1] = (slave_id << 3) | (0x00 << 1) | (0x01 if dab_ok else 0x00)
         
-        # 전류 (100배 스케일링, signed)
-        current_raw = int(current * 100)
-        frame[2:4] = struct.pack('>h', current_raw)
+        # 전류 (100배 스케일링, center-offset with uint16)
+        current_raw = int(current * 100 + 32768)
+        current_raw = max(0, min(65535, current_raw))  # uint16 범위 제한
+        frame[2:4] = struct.pack('>H', current_raw)
         
         # 온도 (0.5도 단위)
         temp_raw = int(temp * 2)
