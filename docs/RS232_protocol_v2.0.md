@@ -1,4 +1,10 @@
+<<<<<<<< HEAD:docs/RS232_interface_protocol_1.md
 # RS232 Interface 프로토콜 명세서 1.0
+========
+# RS232 Interface 프로토콜 v2.0
+
+본 문서는 RS232 시리얼 통신 기반의 Power Control Module 시스템에서 사용되는 프로토콜 v2.0 명세입니다.
+>>>>>>>> 2e48dab (feat(v0.7): Dual/Parallel UI, independent channels, protocol v2.0 docs, default baud 115200; version bump to 0.7):docs/RS232_protocol_v2.0.md
 
 ## 1. Master → SCADA (7 bytes)
 
@@ -7,7 +13,7 @@
 |------|-------|-------------|------|---------|
 | 0 | STX | Start of Text | 0x02 | - |
 | 1 | ID + Reserved | bit[7:3]: ID=0<br>bit[2:0]: Reserved | uint8 | ID: 0~31 |
-| 2-3 | System Voltage | Big-endian<br>Scale: ÷10 | int16 | -3276.8 ~ +3276.7 V |
+| 2-3 | System Voltage | Big-endian<br>Scale: ÷10 | int16 | -3276.8 ~ +327.7 V |
 | 4 | Reserved | Future use | 0x00 | - |
 | 5 | Checksum | Sum(Byte1~4) & 0xFF | uint8 | 0~255 |
 | 6 | ETX | End of Text | 0x03 | - |
@@ -34,27 +40,24 @@
 | 7 | Checksum | Sum(Byte1~6) & 0xFF | uint8 | 0~255 |
 | 8 | ETX | End of Text | 0x03 | - |
 
-## 3. 데이터 타입 및 스케일링 정리
+## 3. 데이터 타입 및 스케일링 요약
 
-### Master → SCADA
-- **시스템 전압**: int16, ÷10 스케일링 (예: 3000 = 300.0V)
-- **슬레이브 전류**: int16, ÷100 스케일링 (예: -8000 = -80.00A)
-- **슬레이브 온도**: uint8, ×0.5 스케일링 (예: 50 = 25.0°C)
-
-### SCADA → Master
-- **전압 상한/하한**: int16, 스케일링 없음 (직접 전압값)
-- **전류 지령**: int8, 스케일링 없음 (직접 전류값)
+- 시스템 전압: int16, ÷10
+- 슬레이브 전류: int16, ÷100
+- 슬레이브 온도: uint8, ×0.5
 
 ## 4. 체크섬 계산
-- 방식: 단순 합 체크섬 (Sum Checksum)
-- 계산: 데이터 바이트들의 합을 구한 후 하위 8비트만 사용
+
+- Sum Checksum (하위 8비트 사용)
 - Master → SCADA: Sum(Byte1~4) & 0xFF
 - SCADA → Master: Sum(Byte1~6) & 0xFF
 
-## 5. 통신 파라미터
-- Baud Rate: 38400 bps (기본값)
+## 5. 통신 파라미터 (v2.0)
+
+- Baud Rate: 115200 bps (기본값)
 - Data Bits: 8
 - Stop Bits: 1
 - Parity: None
 - Flow Control: None
+
 

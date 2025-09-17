@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-SM1 - Serial Monitor v0.6
+SM1 - Serial Monitor v0.7
 PyQt5 기반 시리얼 모니터
 모던하고 안정적인 GUI
 """
@@ -322,6 +322,7 @@ class SerialMonitorApp(QMainWindow):
         self.baud_combo = QComboBox()
         self.baud_combo.addItems(["9600", "19200", "38400", "57600", "115200", "230400", "460800", "921600"])
         self.baud_combo.setCurrentText("115200")
+<<<<<<< HEAD
         # Baud 드롭다운 우측 정렬 및 전체 클릭 가능
         self.baud_combo.setStyleSheet("""
             QComboBox {
@@ -334,6 +335,10 @@ class SerialMonitorApp(QMainWindow):
                 selection-color: black;
             }
         """)
+=======
+        # Baud 드롭다운 우측 정렬
+        self.baud_combo.setStyleSheet("QComboBox { text-align: right; }")
+>>>>>>> 2e48dab (feat(v0.7): Dual/Parallel UI, independent channels, protocol v2.0 docs, default baud 115200; version bump to 0.7)
         conn_layout.addWidget(self.baud_combo, 0, 3)
         
         # 체크섬 검증 선택
@@ -506,7 +511,10 @@ class SerialMonitorApp(QMainWindow):
         start_font = self.start_btn.font()
         start_font.setPointSize(start_font.pointSize() + 2)
         self.start_btn.setFont(start_font)
-        self.start_btn.setStyleSheet("QPushButton { background-color: #4CAF50; color: white; padding: 8px; font-weight: bold; }")
+        self.start_btn.setStyleSheet(
+            "QPushButton { background-color: #4CAF50; color: white; padding: 8px; font-weight: bold; }"
+            "QPushButton:disabled { background-color: #BDBDBD; color: #EEEEEE; }"
+        )
         self.start_btn.clicked.connect(self.send_start_command)
         control_layout.addWidget(self.start_btn, 1, 2)
         
@@ -515,7 +523,10 @@ class SerialMonitorApp(QMainWindow):
         stop_font = self.stop_btn.font()
         stop_font.setPointSize(stop_font.pointSize() + 2)
         self.stop_btn.setFont(stop_font)
-        self.stop_btn.setStyleSheet("QPushButton { background-color: #F44336; color: white; padding: 8px; font-weight: bold; }")
+        self.stop_btn.setStyleSheet(
+            "QPushButton { background-color: #F44336; color: white; padding: 8px; font-weight: bold; }"
+            "QPushButton:disabled { background-color: #BDBDBD; color: #EEEEEE; }"
+        )
         self.stop_btn.clicked.connect(self.send_stop_command)
         control_layout.addWidget(self.stop_btn, 1, 3)
         
@@ -2144,6 +2155,735 @@ class SerialMonitorApp(QMainWindow):
 
         event.accept()
 
+class ChannelPanel(QWidget):
+    """채널별 독립 패널 (Ch1/Ch2)"""
+
+    modeChanged = pyqtSignal(str)
+
+    def __init__(self, channel_index=1, parent=None):
+        super().__init__(parent)
+        self.channel_index = channel_index
+        self.channel_name = f"Ch{self.channel_index}"
+
+        # 상태 변수 (채널 독립)
+        self.serial_worker = None
+        self.serial_thread = None
+        self.connected = False
+        self.packet_count = 0
+        self.system_voltage = 0.0
+        self.system_current = 0.0
+        self.values_changed = False
+        self.original_spinbox_style = ""
+        self.has_received_data = False
+        self.checksum_enabled = True
+        self.changed_spinboxes = set()
+        self.original_values = {}
+        self.operation_mode = "Single"  # Single / Dual / Parallel
+
+        self._build_ui()
+        self.refresh_ports()
+        self.create_initial_modules()
+
+        # 초기 표시
+        self.system_current_label.setText("---          ")
+        self.system_current_label.setStyleSheet("QLabel { font-weight: bold; color: #9E9E9E; }")
+
+    def _build_ui(self):
+        layout = QVBoxLayout(self)
+
+        # 채널 라벨 + 모드 라디오 버튼(우측) 헤더
+        channel_label = QLabel(self.channel_name)
+        bold_font = channel_label.font()
+        bold_font.setPointSize(bold_font.pointSize() + 3)
+        bold_font.setBold(True)
+        channel_label.setFont(bold_font)
+
+        header_widget = QWidget()
+        header_layout = QHBoxLayout(header_widget)
+        header_layout.setContentsMargins(0, 0, 0, 0)
+        header_layout.setSpacing(12)
+        header_layout.addWidget(channel_label)
+        header_layout.addStretch()
+
+        # 모드 라디오 버튼 (Single / Dual / Parallel)
+        self.mode_container = QWidget()
+        mode_layout = QHBoxLayout(self.mode_container)
+        mode_layout.setContentsMargins(0, 0, 0, 0)
+        mode_layout.setSpacing(12)
+        self.mode_group = QButtonGroup(self)
+        self.radio_single = QRadioButton("Single")
+        self.radio_dual = QRadioButton("Dual")
+        self.radio_parallel = QRadioButton("Parallel")
+        self.radio_single.setChecked(True)
+        self.mode_group.addButton(self.radio_single)
+        self.mode_group.addButton(self.radio_dual)
+        self.mode_group.addButton(self.radio_parallel)
+        mode_layout.addWidget(self.radio_single)
+        mode_layout.addWidget(self.radio_dual)
+        mode_layout.addWidget(self.radio_parallel)
+        header_layout.addWidget(self.mode_container)
+        if self.channel_index != 1:
+            self.mode_container.hide()
+        else:
+            self.radio_single.toggled.connect(lambda checked: checked and self.modeChanged.emit('Single'))
+            self.radio_dual.toggled.connect(lambda checked: checked and self.modeChanged.emit('Dual'))
+            self.radio_parallel.toggled.connect(lambda checked: checked and self.modeChanged.emit('Parallel'))
+
+        # 헤더 높이를 고정해서 Ch1/Ch2가 동일 높이를 갖도록 강제
+        header_widget.setFixedHeight(40)
+        layout.addWidget(header_widget)
+
+        # 1. 연결 설정
+        self.conn_group = QGroupBox("Connection Settings")
+        conn_layout = QGridLayout(self.conn_group)
+
+        port_label_layout = QHBoxLayout()
+        port_label_layout.addWidget(QLabel("Port:"))
+        refresh_btn = QPushButton("refresh")
+        refresh_btn.setToolTip("Refresh port list")
+        refresh_btn.setFixedSize(60, 24)
+        refresh_btn.setStyleSheet(
+            """
+            QPushButton { border: 1px solid #ccc; border-radius: 3px; background-color: #f0f0f0; font-size: 12px; }
+            QPushButton:hover { background-color: #e0e0e0; }
+            QPushButton:pressed { background-color: #d0d0d0; }
+            """
+        )
+        refresh_btn.clicked.connect(self.refresh_ports)
+        port_label_layout.addWidget(refresh_btn)
+        port_label_layout.addStretch()
+        port_label_widget = QWidget()
+        port_label_widget.setLayout(port_label_layout)
+        conn_layout.addWidget(port_label_widget, 0, 0)
+
+        self.port_combo = QComboBox()
+        self.port_combo.setMinimumWidth(200)
+        self.port_combo.setStyleSheet("QComboBox { text-align: center; }")
+        conn_layout.addWidget(self.port_combo, 0, 1)
+
+        conn_layout.addWidget(QLabel("Baud:"), 0, 2)
+        self.baud_combo = QComboBox()
+        self.baud_combo.addItems(["9600", "19200", "38400", "57600", "115200", "230400", "460800", "921600"])
+        self.baud_combo.setCurrentText("115200")
+        self.baud_combo.setStyleSheet("QComboBox { text-align: right; }")
+        conn_layout.addWidget(self.baud_combo, 0, 3)
+
+        conn_layout.addWidget(QLabel("Checksum:"), 0, 4)
+        self.checksum_combo = QComboBox()
+        self.checksum_combo.addItems(["ON", "OFF"])
+        self.checksum_combo.setCurrentText("ON")
+        self.checksum_combo.setMinimumWidth(80)
+        self.checksum_combo.setStyleSheet("QComboBox { text-align: center; }")
+        self.checksum_combo.currentTextChanged.connect(self.on_checksum_changed)
+        conn_layout.addWidget(self.checksum_combo, 0, 5)
+
+        self.connect_btn = QPushButton("Disconnected")
+        connect_font = self.connect_btn.font()
+        connect_font.setPointSize(connect_font.pointSize() + 2)
+        self.connect_btn.setFont(connect_font)
+        self.connect_btn.setStyleSheet("QPushButton { background-color: #F44336; color: white; padding: 8px; }")
+        self.connect_btn.setFixedWidth(130)
+        self.connect_btn.clicked.connect(self.toggle_connection)
+        conn_layout.addWidget(self.connect_btn, 0, 6)
+
+        layout.addWidget(self.conn_group)
+        # Ch1/Ch2 컨테이너들의 전체 높이를 맞추기 위해 최소 높이 힌트를 맞춤
+        self.conn_group.setMinimumHeight(90)
+
+        # 2. Control Commands
+        self.control_group = QGroupBox("Control Commands (SCADA → Master)")
+        control_layout = QGridLayout(self.control_group)
+
+        max_voltage_label = QLabel("Max Voltage:")
+        max_voltage_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        control_layout.addWidget(max_voltage_label, 0, 0)
+
+        self.max_voltage_spinbox = QDoubleSpinBox()
+        self.max_voltage_spinbox.setRange(0.0, 1000.0)
+        self.max_voltage_spinbox.setDecimals(1)
+        self.max_voltage_spinbox.setSuffix(" V")
+        self.max_voltage_spinbox.setValue(500.0)
+        self.max_voltage_spinbox.setAlignment(Qt.AlignRight)
+        spinbox_font = self.max_voltage_spinbox.font()
+        spinbox_font.setPointSize(spinbox_font.pointSize() + 2)
+        self.max_voltage_spinbox.setFont(spinbox_font)
+        self.max_voltage_spinbox.setStyleSheet("QDoubleSpinBox { padding-right: 50px; }")
+        control_layout.addWidget(self.max_voltage_spinbox, 0, 1)
+
+        current_label = QLabel("Current Command:")
+        current_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        control_layout.addWidget(current_label, 0, 2)
+        self.current_spinbox = QDoubleSpinBox()
+        self.current_spinbox.setRange(-128.0, 127.0)
+        self.current_spinbox.setDecimals(0)
+        self.current_spinbox.setSuffix(" A")
+        self.current_spinbox.setValue(0.0)
+        self.current_spinbox.setAlignment(Qt.AlignRight)
+        current_font = self.current_spinbox.font()
+        current_font.setPointSize(current_font.pointSize() + 2)
+        self.current_spinbox.setFont(current_font)
+        self.current_spinbox.setStyleSheet("QDoubleSpinBox { padding-right: 50px; }")
+        control_layout.addWidget(self.current_spinbox, 0, 3)
+
+        min_voltage_label = QLabel("Min Voltage:")
+        min_voltage_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        control_layout.addWidget(min_voltage_label, 1, 0)
+
+        self.min_voltage_spinbox = QDoubleSpinBox()
+        self.min_voltage_spinbox.setRange(0.0, 1000.0)
+        self.min_voltage_spinbox.setDecimals(1)
+        self.min_voltage_spinbox.setSuffix(" V")
+        self.min_voltage_spinbox.setValue(0.0)
+        self.min_voltage_spinbox.setAlignment(Qt.AlignRight)
+        min_font = self.min_voltage_spinbox.font()
+        min_font.setPointSize(min_font.pointSize() + 2)
+        self.min_voltage_spinbox.setFont(min_font)
+        self.min_voltage_spinbox.setStyleSheet("QDoubleSpinBox { padding-right: 50px; }")
+        control_layout.addWidget(self.min_voltage_spinbox, 1, 1)
+
+        # 변경 추적 원래 값
+        self.original_spinbox_style = self.max_voltage_spinbox.styleSheet()
+        self.original_values[self.max_voltage_spinbox] = 500.0
+        self.original_values[self.min_voltage_spinbox] = 0.0
+        self.original_values[self.current_spinbox] = 0.0
+
+        self.max_voltage_spinbox.valueChanged.connect(lambda v: self.on_value_changed(self.max_voltage_spinbox, v))
+        self.min_voltage_spinbox.valueChanged.connect(lambda v: self.on_value_changed(self.min_voltage_spinbox, v))
+        self.current_spinbox.valueChanged.connect(lambda v: self.on_value_changed(self.current_spinbox, v))
+
+        self.start_btn = QPushButton("Command")
+        start_font = self.start_btn.font()
+        start_font.setPointSize(start_font.pointSize() + 2)
+        self.start_btn.setFont(start_font)
+        self.start_btn.setStyleSheet(
+            "QPushButton { background-color: #4CAF50; color: white; padding: 8px; font-weight: bold; }"
+            "QPushButton:disabled { background-color: #BDBDBD; color: #EEEEEE; }"
+        )
+        self.start_btn.clicked.connect(self.send_start_command)
+        control_layout.addWidget(self.start_btn, 1, 2)
+
+        self.stop_btn = QPushButton("Stop")
+        stop_font = self.stop_btn.font()
+        stop_font.setPointSize(stop_font.pointSize() + 2)
+        self.stop_btn.setFont(stop_font)
+        self.stop_btn.setStyleSheet(
+            "QPushButton { background-color: #F44336; color: white; padding: 8px; font-weight: bold; }"
+            "QPushButton:disabled { background-color: #BDBDBD; color: #EEEEEE; }"
+        )
+        self.stop_btn.clicked.connect(self.send_stop_command)
+        control_layout.addWidget(self.stop_btn, 1, 3)
+
+        # (모드 라디오 버튼은 헤더로 이동함)
+
+        # 3. 시스템 표시
+        sys_voltage_label = QLabel("System Voltage:")
+        sys_voltage_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        control_layout.addWidget(sys_voltage_label, 2, 0)
+        self.system_voltage_label = QLabel("---          ")
+        voltage_font = self.font()
+        voltage_font.setPointSize(int(voltage_font.pointSize() * 1.5))
+        self.system_voltage_label.setFont(voltage_font)
+        self.system_voltage_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        self.system_voltage_label.setStyleSheet("QLabel { font-weight: bold; color: #9E9E9E; }")
+        control_layout.addWidget(self.system_voltage_label, 2, 1)
+
+        sys_current_label = QLabel("System Current:")
+        sys_current_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        control_layout.addWidget(sys_current_label, 2, 2)
+        self.system_current_label = QLabel("---          ")
+        current_font2 = self.font()
+        current_font2.setPointSize(int(current_font2.pointSize() * 1.5))
+        self.system_current_label.setFont(current_font2)
+        self.system_current_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        self.system_current_label.setStyleSheet("QLabel { font-weight: bold; color: #9E9E9E; }")
+        control_layout.addWidget(self.system_current_label, 2, 3)
+
+        layout.addWidget(self.control_group)
+        self.control_group.setMinimumHeight(150)
+
+        # 4. 통계
+        self.stats_label = QLabel("Connected: No | Modules: 0 | Packets: 0")
+        self.stats_label.setStyleSheet("QLabel { background-color: #E3F2FD; padding: 8px; border: 1px solid #BBDEFB; }")
+        layout.addWidget(self.stats_label)
+
+        # 5. 데이터 테이블
+        table_group = QGroupBox("Slave Module Data")
+        table_layout = QVBoxLayout(table_group)
+        self.table = QTableWidget()
+        self.table.setColumnCount(5)
+        self.table.setHorizontalHeaderLabels(['ID', 'DAB_OK', 'Current (A)', 'Temp (°C)', 'Update'])
+        header = self.table.horizontalHeader()
+        header.setSectionResizeMode(QHeaderView.Interactive)
+        self.table.setColumnWidth(0, 60)
+        self.table.setColumnWidth(1, 100)
+        self.table.setColumnWidth(2, 240)
+        self.table.setColumnWidth(3, 240)
+        self.table.setColumnWidth(4, 120)
+        header.setDefaultAlignment(Qt.AlignCenter)
+        self.table.setAlternatingRowColors(True)
+        self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
+        self.table.verticalHeader().setVisible(False)
+        self.table.verticalHeader().setDefaultSectionSize(35)
+        header.setFixedHeight(40)
+        table_layout.addWidget(self.table)
+        layout.addWidget(table_group)
+        table_group.setMinimumHeight(420)
+
+        # 6. 하단 버튼
+        btn_layout = QHBoxLayout()
+        add_btn = QPushButton("+")
+        add_btn.setFixedSize(60, 30)
+        add_btn.setToolTip("Add Test Module")
+        add_btn.clicked.connect(self.add_test_module)
+        btn_layout.addWidget(add_btn)
+        remove_btn = QPushButton("-")
+        remove_btn.setFixedSize(60, 30)
+        remove_btn.setToolTip("Remove Last Module")
+        remove_btn.clicked.connect(self.remove_last_module)
+        btn_layout.addWidget(remove_btn)
+        btn_layout.addStretch()
+        reset_btn = QPushButton("Reset")
+        reset_btn.clicked.connect(self.reset_to_initial)
+        btn_layout.addWidget(reset_btn)
+        layout.addLayout(btn_layout)
+
+        # 데이터 저장용
+        self.module_rows = {}
+        self.module_currents = {}
+        self.module_last_update = {}
+
+        # 상태 체크 타이머
+        self.status_timer = QTimer()
+        self.status_timer.timeout.connect(self.check_module_status)
+        self.status_timer.start(1000)
+
+    def set_controls_enabled(self, enabled: bool):
+        """Control Commands 영역 활성/비활성 (병렬 모드: False)"""
+        self.control_group.setEnabled(enabled)
+        # 버튼 시각적 비활성화 스타일이 확실히 적용되도록 개별 처리
+        self.start_btn.setEnabled(enabled)
+        self.stop_btn.setEnabled(enabled)
+
+    def get_clean_port_name(self, device_path, description):
+        clean_name = device_path.replace('/dev/cu.', '').replace('/dev/tty.', '')
+        if clean_name.startswith('COM'):
+            return clean_name
+        clean_name = clean_name.replace('usbserial-', '')
+        if description:
+            desc_lower = description.lower()
+            if 'ftdi' in desc_lower or 'ft' in desc_lower:
+                chip_type = 'FTDI'
+            elif 'cp210' in desc_lower or 'silicon labs' in desc_lower:
+                chip_type = 'SiLabs'
+            elif 'ch340' in desc_lower or 'ch341' in desc_lower:
+                chip_type = 'WCH'
+            elif 'pl2303' in desc_lower or 'prolific' in desc_lower:
+                chip_type = 'Prolific'
+            else:
+                chip_type = 'USB'
+            if clean_name and clean_name != device_path:
+                return f"{chip_type} {clean_name}"
+            else:
+                return f"{chip_type} Serial"
+        return clean_name if clean_name else device_path
+
+    def refresh_ports(self):
+        self.port_combo.clear()
+        all_ports = serial.tools.list_ports.comports()
+        serial_keywords = ['usbserial', 'tty.usb', 'COM', 'FTDI', 'CP210', 'CH340', 'PL2303', 'Serial', 'UART']
+        exclude_keywords = ['bluetooth', 'debug-console', 'focal', 'airpods']
+        filtered_ports = []
+        for port in all_ports:
+            port_info = f"{port.device} {port.description} {port.manufacturer or ''}".lower()
+            if any(ex.lower() in port_info for ex in exclude_keywords):
+                print(f"✗ Excluded: {port.device} - {port.description}")
+                continue
+            if any(k.lower() in port_info for k in serial_keywords):
+                display_name = self.get_clean_port_name(port.device, port.description)
+                filtered_ports.append((port.device, display_name))
+                print(f"✓ Serial port: {port.device} -> {display_name}")
+            else:
+                print(f"✗ Filtered out: {port.device} - {port.description}")
+        if not filtered_ports:
+            filtered_ports = [(port.device, port.device) for port in all_ports]
+            print("⚠️  No serial ports found, showing all ports")
+        for device_path, display_name in filtered_ports:
+            self.port_combo.addItem(display_name, device_path)
+        print(f"[{self.channel_name}] Available serial ports: {[name for _, name in filtered_ports]}")
+
+    def toggle_connection(self):
+        if not self.connected:
+            self.connect_serial()
+        else:
+            self.disconnect_serial()
+
+    def connect_serial(self):
+        port = self.port_combo.currentData()
+        if not port:
+            port = self.port_combo.currentText()
+        baud = int(self.baud_combo.currentText())
+        if not port:
+            QMessageBox.warning(self, "Warning", f"[{self.channel_name}] Please select a port")
+            return
+        self.serial_worker = SerialWorker(self)
+        self.serial_thread = QThread()
+        self.serial_worker.moveToThread(self.serial_thread)
+        self.serial_worker.slave_data_received.connect(self.update_slave_data)
+        self.serial_worker.system_voltage_received.connect(self.update_system_voltage)
+        self.serial_thread.started.connect(self.serial_worker.read_serial)
+        if self.serial_worker.connect_serial(port, baud):
+            self.connected = True
+            self.serial_thread.start()
+            self.connect_btn.setText("Connected")
+            self.connect_btn.setStyleSheet("QPushButton { background-color: #4CAF50; color: white; padding: 8px; }")
+            self.system_voltage_label.setText("0.0 V          ")
+            self.system_voltage_label.setStyleSheet("QLabel { font-weight: bold; color: #9E9E9E; }")
+            self.system_current_label.setText("0.0 A          ")
+            self.system_current_label.setStyleSheet("QLabel { font-weight: bold; color: #9E9E9E; }")
+            print(f"[{self.channel_name}] Connected to {port} at {baud} baud")
+        else:
+            QMessageBox.critical(self, "Error", f"[{self.channel_name}] Failed to connect to {port}")
+
+    def disconnect_serial(self):
+        self.connected = False
+        if self.serial_worker:
+            self.serial_worker.disconnect_serial()
+        if self.serial_thread:
+            self.serial_thread.quit()
+            self.serial_thread.wait()
+        self.serial_worker = None
+        self.serial_thread = None
+        self.connect_btn.setText("Disconnected")
+        self.connect_btn.setStyleSheet("QPushButton { background-color: #F44336; color: white; padding: 8px; }")
+        self.system_voltage_label.setText("---          ")
+        self.system_voltage_label.setStyleSheet("QLabel { font-weight: bold; color: #9E9E9E; }")
+        self.system_current_label.setText("---          ")
+        self.system_current_label.setStyleSheet("QLabel { font-weight: bold; color: #9E9E9E; }")
+        self.has_received_data = False
+        print(f"[{self.channel_name}] Disconnected")
+
+    @pyqtSlot(int, float, float, bool, str)
+    def update_slave_data(self, slave_id, current, temp, dab_ok, timestamp):
+        if not self.connected:
+            return
+        self.packet_count += 1
+        self.add_slave_module(slave_id, current, temp, dab_ok, timestamp)
+        self.update_stats()
+
+    @pyqtSlot(float, str)
+    def update_system_voltage(self, voltage, timestamp):
+        if not self.connected:
+            return
+        self.system_voltage = voltage
+        self.system_voltage_label.setText(f"{voltage:.1f} V          ")
+        self.system_voltage_label.setStyleSheet("QLabel { font-weight: bold; color: #2E7D32; }")
+        self.has_received_data = True
+        self.packet_count += 1
+        self.update_stats()
+
+    def update_system_current(self):
+        self.system_current = sum(self.module_currents.values())
+        self.system_current_label.setText(f"{self.system_current:.2f} A          ")
+        if self.has_received_data:
+            self.system_current_label.setStyleSheet("QLabel { font-weight: bold; color: #1976D2; }")
+
+    def update_stats(self):
+        self.stats_label.setText(
+            f"Connected: {'Yes' if self.connected else 'No'} | Modules: {len(self.module_rows)} | Packets: {self.packet_count}"
+        )
+
+    def add_slave_module(self, slave_id, current, temp, dab_ok, timestamp):
+        if slave_id not in self.module_rows:
+            row = self.table.rowCount()
+            self.table.insertRow(row)
+            self.module_rows[slave_id] = row
+        row = self.module_rows[slave_id]
+        self.module_last_update[slave_id] = time.time()
+        id_item = QTableWidgetItem(str(slave_id))
+        id_item.setTextAlignment(Qt.AlignCenter)
+        self.table.setItem(row, 0, id_item)
+        dab_item = QTableWidgetItem("✓" if dab_ok else "✗")
+        dab_item.setTextAlignment(Qt.AlignCenter)
+        if dab_ok:
+            dab_item.setBackground(QColor(200, 255, 200))
+        else:
+            dab_item.setBackground(QColor(255, 200, 200))
+        self.table.setItem(row, 1, dab_item)
+        current_item = QTableWidgetItem(f"{current:.2f} A                 ")
+        current_item.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        self.table.setItem(row, 2, current_item)
+        temp_item = QTableWidgetItem(f"{temp:.1f} °C                 ")
+        temp_item.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        self.table.setItem(row, 3, temp_item)
+        update_item = QTableWidgetItem(timestamp)
+        update_item.setTextAlignment(Qt.AlignCenter)
+        self.table.setItem(row, 4, update_item)
+        self.module_currents[slave_id] = current
+        self.update_system_current()
+
+    def check_module_status(self):
+        if not self.connected:
+            return
+        current_time = time.time()
+        for slave_id, row in self.module_rows.items():
+            if slave_id in self.module_last_update:
+                time_since = current_time - self.module_last_update[slave_id]
+                if time_since >= 1.0:
+                    dab_item = self.table.item(row, 1)
+                    if dab_item:
+                        dab_item.setBackground(QColor(200, 200, 200))
+                if time_since >= 5.0:
+                    current_item = self.table.item(row, 2)
+                    if current_item:
+                        current_item.setText("0.00 A                 ")
+                    temp_item = self.table.item(row, 3)
+                    if temp_item:
+                        temp_item.setText("0.0 °C                 ")
+                    dab_item = self.table.item(row, 1)
+                    if dab_item:
+                        dab_item.setText("✗")
+                        dab_item.setBackground(QColor(200, 200, 200))
+                    update_item = self.table.item(row, 4)
+                    if update_item:
+                        update_item.setText("--:--:--")
+                    if slave_id in self.module_currents:
+                        self.module_currents[slave_id] = 0.0
+                        self.update_system_current()
+
+    def add_test_module(self):
+        next_id = len(self.module_rows) + 1
+        if next_id > 31:
+            QMessageBox.warning(self, "Warning", "Maximum 31 modules reached")
+            return
+        self.add_slave_module(next_id, 0.0, 0.0, False, "--:--:--")
+        self.update_stats()
+        print(f"[{self.channel_name}] 테스트 모듈 ID {next_id} 추가됨")
+
+    def remove_last_module(self):
+        if not self.module_rows:
+            return
+        max_id = max(self.module_rows.keys())
+        row = self.module_rows[max_id]
+        self.table.removeRow(row)
+        del self.module_rows[max_id]
+        if max_id in self.module_currents:
+            del self.module_currents[max_id]
+        if max_id in self.module_last_update:
+            del self.module_last_update[max_id]
+        for module_id, module_row in list(self.module_rows.items()):
+            if module_row > row:
+                self.module_rows[module_id] = module_row - 1
+        self.update_system_current()
+        self.update_stats()
+        print(f"[{self.channel_name}] 모듈 ID {max_id} 제거됨")
+
+    def reset_to_initial(self):
+        self.table.setRowCount(0)
+        self.module_rows.clear()
+        self.module_currents.clear()
+        self.module_last_update.clear()
+        self.packet_count = 0
+        self.create_initial_modules()
+        self.system_voltage = 0.0
+        self.system_current = 0.0
+        self.has_received_data = False
+        self.system_voltage_label.setText("---          ")
+        self.system_voltage_label.setStyleSheet("QLabel { font-weight: bold; color: #9E9E9E; }")
+        self.system_current_label.setText("---          ")
+        self.system_current_label.setStyleSheet("QLabel { font-weight: bold; color: #9E9E9E; }")
+        self.stats_label.setText("Connected: No | Modules: 10 | Packets: 0")
+        self.values_changed = False
+        self.changed_spinboxes.clear()
+        self.start_btn.setText("Command")
+        self.restore_spinbox_colors()
+        self.original_values[self.max_voltage_spinbox] = 500.0
+        self.original_values[self.min_voltage_spinbox] = 0.0
+        self.original_values[self.current_spinbox] = 0.0
+        print(f"[{self.channel_name}] 초기 상태로 리셋됨 (10개 모듈)")
+
+    def create_initial_modules(self):
+        for i in range(1, 11):
+            self.add_slave_module(i, 0.0, 0.0, False, "--:--:--")
+
+    def on_value_changed(self, spinbox, value):
+        original_value = self.original_values.get(spinbox, 0.0)
+        if abs(value - original_value) < 0.01:
+            self.restore_specific_spinbox_color(spinbox)
+        else:
+            self.values_changed = True
+            self.changed_spinboxes.add(spinbox)
+            changed_style = "QDoubleSpinBox { background-color: #FFF9C4; padding-right: 50px; }"
+            spinbox.setStyleSheet(changed_style)
+            self.start_btn.setText("Update")
+
+    def restore_spinbox_colors(self):
+        normal_style = "QDoubleSpinBox { padding-right: 50px; }"
+        self.max_voltage_spinbox.setStyleSheet(normal_style)
+        self.min_voltage_spinbox.setStyleSheet(normal_style)
+        self.current_spinbox.setStyleSheet(normal_style)
+        self.changed_spinboxes.clear()
+
+    def restore_specific_spinbox_color(self, spinbox):
+        normal_style = "QDoubleSpinBox { padding-right: 50px; }"
+        spinbox.setStyleSheet(normal_style)
+        self.changed_spinboxes.discard(spinbox)
+        if not self.changed_spinboxes:
+            self.values_changed = False
+            self.start_btn.setText("Command")
+
+    def on_checksum_changed(self, value):
+        self.checksum_enabled = (value == "ON")
+        print(f"[{self.channel_name}] 체크섬 검증 {'활성화' if self.checksum_enabled else '비활성화'}")
+
+    def send_start_command(self):
+        if not self.connected or not self.serial_worker:
+            QMessageBox.warning(self, "Warning", f"[{self.channel_name}] Please connect to serial port first")
+            return
+        try:
+            frame = bytearray(9)
+            frame[0] = 0x02
+            frame[1] = 0x01  # Start
+            max_voltage_raw = int(abs(self.max_voltage_spinbox.value()))
+            frame[2:4] = struct.pack('>h', max_voltage_raw)
+            min_voltage_raw = int(abs(self.min_voltage_spinbox.value()))
+            frame[4:6] = struct.pack('>h', min_voltage_raw)
+            current_raw = int(self.current_spinbox.value())
+            current_raw = max(-128, min(127, current_raw))
+            frame[6] = struct.pack('>b', current_raw)[0]
+            checksum = sum(frame[1:7]) & 0xFF
+            frame[7] = checksum
+            frame[8] = 0x03
+            # 병렬 운전 모드 로그 표시
+            mode_note = " (Parallel)" if self.operation_mode == 'Parallel' else ""
+            self.serial_worker.serial_port.write(frame)
+            self.values_changed = False
+            self.start_btn.setText("Command")
+            self.restore_spinbox_colors()
+            self.original_values[self.max_voltage_spinbox] = self.max_voltage_spinbox.value()
+            self.original_values[self.min_voltage_spinbox] = self.min_voltage_spinbox.value()
+            self.original_values[self.current_spinbox] = self.current_spinbox.value()
+            print(
+                f"[{self.channel_name}] Start command sent{mode_note}: Max={self.max_voltage_spinbox.value():.1f}V, Min={self.min_voltage_spinbox.value():.1f}V, Current={self.current_spinbox.value():.0f}A, Checksum=0x{checksum:02X}"
+            )
+        except Exception as e:
+            print(f"[{self.channel_name}] Failed to send start command: {e}")
+            QMessageBox.critical(self, "Error", f"Failed to send start command: {e}")
+
+    def send_stop_command(self):
+        if not self.connected or not self.serial_worker:
+            QMessageBox.warning(self, "Warning", f"[{self.channel_name}] Please connect to serial port first")
+            return
+        try:
+            frame = bytearray(9)
+            frame[0] = 0x02
+            frame[1] = 0x00  # Stop
+            frame[2:4] = struct.pack('>h', 0)
+            frame[4:6] = struct.pack('>h', 0)
+            frame[6] = 0x00
+            checksum = sum(frame[1:7]) & 0xFF
+            frame[7] = checksum
+            frame[8] = 0x03
+            self.serial_worker.serial_port.write(frame)
+            self.values_changed = False
+            self.start_btn.setText("Command")
+            self.restore_spinbox_colors()
+            print(f"[{self.channel_name}] Stop command sent: Checksum=0x{checksum:02X}")
+        except Exception as e:
+            print(f"[{self.channel_name}] Failed to send stop command: {e}")
+            QMessageBox.critical(self, "Error", f"Failed to send stop command: {e}")
+
+class MainWindow(QMainWindow):
+    """싱글/듀얼/병렬 모드 전환 및 레이아웃 관리"""
+
+    def __init__(self):
+        super().__init__()
+        self.setWindowTitle(f'SM1 - Serial Monitor v{__version__} - Power Control Module')
+        # 초기 창 크기: 가로 +10px, 세로 +20px (스크롤바 방지용)
+        self.setGeometry(100, 100, 810, 850)
+        font = self.font()
+        font.setPointSize(font.pointSize() + 3)
+        self.setFont(font)
+
+        central = QWidget()
+        self.setCentralWidget(central)
+        self.main_layout = QVBoxLayout(central)
+        self.channels_layout = QHBoxLayout()
+        self.main_layout.addLayout(self.channels_layout)
+
+        # Ch1 생성
+        self.ch1 = ChannelPanel(channel_index=1, parent=self)
+        self.channels_layout.addWidget(self.ch1)
+        self.ch2 = None
+
+        # 모드 변경 핸들링 (Ch1만 보유)
+        self.ch1.modeChanged.connect(self.on_mode_changed)
+
+        # 원래 창 크기 저장 (스크롤바 방지 사이즈)
+        self.single_size = QSize(810, 850)
+
+    def on_mode_changed(self, mode: str):
+        mode = mode.strip()
+        if mode == 'Single':
+            self._ensure_single()
+        elif mode == 'Dual':
+            self._ensure_dual(parallel=False)
+        elif mode == 'Parallel':
+            self._ensure_dual(parallel=True)
+        else:
+            print(f"Unknown mode: {mode}")
+
+    def _ensure_single(self):
+        if self.ch2 is not None:
+            try:
+                if self.ch2.connected:
+                    self.ch2.disconnect_serial()
+            except Exception:
+                pass
+            self.ch2.setParent(None)
+            self.ch2.deleteLater()
+            self.ch2 = None
+        self.ch1.operation_mode = 'Single'
+        # 창 크기 원복: 제약 해제 후 강제 축소, 이후 제약 복원
+        try:
+            if self.centralWidget():
+                self.centralWidget().setMinimumSize(0, 0)
+        except Exception:
+            pass
+        self.setMinimumSize(0, 0)
+        # 일시적으로 최대 크기를 줄여 강제 축소
+        self.setMaximumSize(self.single_size)
+        self.resize(self.single_size)
+        # 이벤트 루프 다음 틱에 최대 크기 제약 해제
+        QTimer.singleShot(0, lambda: self.setMaximumSize(QSize(16777215, 16777215)))
+
+    def _ensure_dual(self, parallel: bool):
+        if self.ch2 is None:
+            self.ch2 = ChannelPanel(channel_index=2, parent=self)
+            self.channels_layout.addWidget(self.ch2)
+        # 모드 반영
+        self.ch1.operation_mode = 'Parallel' if parallel else 'Dual'
+        # 병렬 모드면 Ch2 컨트롤 비활성화
+        self.ch2.set_controls_enabled(not parallel)
+        # 창 크기 확장 (대략 2배)
+        current_size = self.size()
+        self.resize(
+            max(self.single_size.width() * 2, current_size.width()),
+            max(self.single_size.height(), current_size.height())
+        )
+
+    def closeEvent(self, event):
+        try:
+            if self.ch1 and self.ch1.connected:
+                self.ch1.disconnect_serial()
+        except Exception:
+            pass
+        try:
+            if self.ch2 and self.ch2.connected:
+                self.ch2.disconnect_serial()
+        except Exception:
+            pass
+        return super().closeEvent(event)
+
 def main():
     app = QApplication(sys.argv)
     
@@ -2155,7 +2895,7 @@ def main():
     # palette.setColor(QPalette.Window, QColor(53, 53, 53))
     # app.setPalette(palette)
     
-    window = SerialMonitorApp()
+    window = MainWindow()
     window.show()
     
     print(f"SM1 - Serial Monitor v{__version__} 시작")

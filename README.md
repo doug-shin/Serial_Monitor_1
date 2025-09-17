@@ -1,4 +1,4 @@
-# SM1 - Serial Monitor v0.6
+# SM1 - Serial Monitor v0.7
 
 PyQt5 기반의 시리얼 모니터 애플리케이션입니다.
 
@@ -30,6 +30,7 @@ pip3 install PyQt5 pyserial
 ## 🎯 주요 기능
 
 - **실시간 시리얼 통신 모니터링**
+- **Single / Dual / Parallel 모드 지원 (Ch1/Ch2 독립 처리)**
 - **SCADA → Master 제어 명령 전송**
 - **Master → SCADA 데이터 수신 및 표시**
 - **체크섬 검증 옵션**
@@ -41,14 +42,14 @@ pip3 install PyQt5 pyserial
 
 ### 1. 연결 설정
 1. **Port**: USB-to-Serial 어댑터 포트 선택
-2. **Baud**: 통신 속도 설정 (기본값: 38400)
+2. **Baud**: 통신 속도 설정 (기본값: 115200)
 3. **Checksum**: 체크섬 검증 ON/OFF
 4. **Connect** 버튼 클릭
 
 ### 2. 제어 명령
 - **Max/Min Voltage**: 전압 상한/하한 설정
 - **Current Command**: 전류 지령 설정
-- **Run/Stop**: 시작/정지 명령
+- **Command/Stop**: 시작/정지 명령
 
 ### 3. 모듈 관리
 - 초기 10개 모듈 자동 생성
@@ -57,16 +58,10 @@ pip3 install PyQt5 pyserial
 
 ## 📡 통신 프로토콜
 
-### Master → SCADA (7 bytes)
-- **시스템 전압**: ID=0, 전압 데이터
-- **슬레이브 데이터**: ID≠0, 전류/온도 데이터
+- v1.0: [docs/RS232_protocol_v1.0.md](docs/RS232_protocol_v1.0.md)
+- v2.0: [docs/RS232_protocol_v2.0.md](docs/RS232_protocol_v2.0.md)
 
-### SCADA → Master (9 bytes)
-- **제어 명령**: Start/Stop
-- **전압 지령**: Max/Min 전압
-- **전류 지령**: 모듈별 전류
-
-자세한 프로토콜은 [docs/RS232_interface_protocol.md](docs/RS232_interface_protocol.md) 참조
+> 현재 애플리케이션은 v2.0 규격(기본 Baud 115200)을 기본으로 동작합니다.
 
 ## 🔨 빌드
 
@@ -76,8 +71,8 @@ pip3 install PyQt5 pyserial
 ```
 
 빌드 결과:
-- **macOS**: `dist/SM1_v0.6`
-- **Windows**: `dist/SM1_v0.6.exe`
+- **macOS**: `dist/SM1_v0.7`
+- **Windows**: `dist/SM1_v0.7.exe`
 
 ## 📁 파일 구조
 
