@@ -1,10 +1,6 @@
-<<<<<<<< HEAD:docs/RS232_interface_protocol_1.md
-# RS232 Interface 프로토콜 명세서 1.0
-========
 # RS232 Interface 프로토콜 v2.0
 
 본 문서는 RS232 시리얼 통신 기반의 Power Control Module 시스템에서 사용되는 프로토콜 v2.0 명세입니다.
->>>>>>>> 2e48dab (feat(v0.7): Dual/Parallel UI, independent channels, protocol v2.0 docs, default baud 115200; version bump to 0.7):docs/RS232_protocol_v2.0.md
 
 ## 1. Master → SCADA (7 bytes)
 

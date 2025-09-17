@@ -1,4 +1,4 @@
-# SM1 - Serial Monitor v0.7
+# SM1 - Serial Monitor v0.75
 
 PyQt5 기반의 시리얼 모니터 애플리케이션입니다.
 
@@ -71,8 +71,8 @@ pip3 install PyQt5 pyserial
 ```
 
 빌드 결과:
-- **macOS**: `dist/SM1_v0.7`
-- **Windows**: `dist/SM1_v0.7.exe`
+- **macOS**: `dist/SM1_v0.75`
+- **Windows**: `dist/SM1_v0.75.exe`
 
 ## 📁 파일 구조
 

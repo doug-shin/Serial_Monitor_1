@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 """
-SM1 - Serial Monitor v0.7
+SM1 - Serial Monitor v0.75
 PyQt5 기반 시리얼 모니터
 모던하고 안정적인 GUI
 """
 
-__version__ = "0.7"
+__version__ = "0.75"
 __author__ = "Serial Monitor Team"
 
 import sys
@@ -322,23 +322,8 @@ class SerialMonitorApp(QMainWindow):
         self.baud_combo = QComboBox()
         self.baud_combo.addItems(["9600", "19200", "38400", "57600", "115200", "230400", "460800", "921600"])
         self.baud_combo.setCurrentText("115200")
-<<<<<<< HEAD
-        # Baud 드롭다운 우측 정렬 및 전체 클릭 가능
-        self.baud_combo.setStyleSheet("""
-            QComboBox {
-                text-align: right;
-            }
-            QComboBox QAbstractItemView {
-                text-align: right;
-                background: white;
-                selection-background-color: #e0e0e0;
-                selection-color: black;
-            }
-        """)
-=======
         # Baud 드롭다운 우측 정렬
         self.baud_combo.setStyleSheet("QComboBox { text-align: right; }")
->>>>>>> 2e48dab (feat(v0.7): Dual/Parallel UI, independent channels, protocol v2.0 docs, default baud 115200; version bump to 0.7)
         conn_layout.addWidget(self.baud_combo, 0, 3)
         
         # 체크섬 검증 선택
