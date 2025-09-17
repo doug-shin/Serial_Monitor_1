@@ -142,23 +142,43 @@ class SerialWorker(QObject):
             slave_id = (byte1 >> 3) & 0x1F  # 상위 5비트
             dab_ok = byte1 & 0x01  # 최하위 비트
             
-            # 패킷 수신 추적
-            if self.parent_app:
-                self.parent_app.track_packet_received(self.channel)
+            # 패킷 수신 추적 (있을 때만 호출)
+            if self.parent_app and hasattr(self.parent_app, 'track_packet_received'):
+                try:
+                    self.parent_app.track_packet_received(self.channel)
+                except Exception:
+                    pass
 
-            # 체크섬 검증 및 에러 추적
-            if self.parent_app and self.parent_app.checksum_enabled[self.channel]:
+            # 체크섬 검증 및 에러 추적 (호환: bool 또는 채널별 리스트)
+            checksum_enabled_for_channel = False
+            if self.parent_app and hasattr(self.parent_app, 'checksum_enabled'):
+                try:
+                    ce_attr = getattr(self.parent_app, 'checksum_enabled')
+                    if isinstance(ce_attr, (list, tuple)):
+                        idx = max(0, min(self.channel, len(ce_attr)-1))
+                        checksum_enabled_for_channel = bool(ce_attr[idx])
+                    else:
+                        checksum_enabled_for_channel = bool(ce_attr)
+                except Exception:
+                    checksum_enabled_for_channel = False
+
+            if checksum_enabled_for_channel:
                 if checksum_calc != checksum_recv:
-                    # 체크섬 에러 추적
-                    self.parent_app.track_checksum_error(self.channel, frame)
+                    # 체크섬 에러 추적 (있을 때만 호출)
+                    if self.parent_app and hasattr(self.parent_app, 'track_checksum_error'):
+                        try:
+                            self.parent_app.track_checksum_error(self.channel, frame)
+                        except Exception:
+                            pass
                     print(f"⚠️  Checksum error - ID={slave_id}: calc={checksum_calc:02X}, recv={checksum_recv:02X}, frame={frame.hex()}")
                     return
                 else:
-                    # 체크섬 성공 추적
-                    self.parent_app.track_checksum_success(self.channel)
-            elif self.parent_app and not self.parent_app.checksum_enabled[self.channel]:
-                # 체크섬 비활성화 시에는 로그 줄이기
-                pass
+                    # 체크섬 성공 추적 (있을 때만 호출)
+                    if self.parent_app and hasattr(self.parent_app, 'track_checksum_success'):
+                        try:
+                            self.parent_app.track_checksum_success(self.channel)
+                        except Exception:
+                            pass
                 
             timestamp = datetime.now().strftime("%H:%M:%S.%f")[:-5]  # 0.1초 단위까지 표시
             
@@ -1426,9 +1446,9 @@ class SerialMonitorApp(QMainWindow):
             return
         
         # 깔끔한 초기값 설정 (0A, 0°C)
-        self.add_slave_module(next_id, 0.0, 0.0, False, "--:--:--", channel)
-        self.update_stats(channel)
-        print(f"CH{channel+1} 테스트 모듈 ID {next_id} 추가됨")
+        self.add_slave_module(next_id, 0.0, 0.0, False, "--:--:--")
+        self.update_stats()
+        print(f"[{self.channel_name}] 테스트 모듈 ID {next_id} 추가됨")
         
     def remove_last_module(self):
         """마지막 모듈 제거"""
@@ -1456,7 +1476,7 @@ class SerialMonitorApp(QMainWindow):
                 
         self.update_system_current()
         self.update_stats()
-        print(f"CH{channel+1} 모듈 ID {max_id} 제거됨")
+        print(f"[{self.channel_name}] 모듈 ID {max_id} 제거됨")
         
     def reset_to_initial(self):
         """초기 상태로 되돌리기 (10개 모듈)"""
@@ -1501,7 +1521,7 @@ class SerialMonitorApp(QMainWindow):
         self.original_values[self.min_voltage_spinbox] = 0.0
         self.original_values[self.current_spinbox] = 0.0
         
-        print(f"CH{channel+1} 초기 상태로 리셋됨 (10개 모듈)")
+        print(f"[{self.channel_name}] 초기 상태로 리셋됨 (10개 모듈)")
 
     def track_checksum_error(self, channel, frame_data):
         """체크섬 에러 추적 및 통계 업데이트"""
@@ -2510,7 +2530,7 @@ class ChannelPanel(QWidget):
         if not port:
             QMessageBox.warning(self, "Warning", f"[{self.channel_name}] Please select a port")
             return
-        self.serial_worker = SerialWorker(self)
+        self.serial_worker = SerialWorker(self, channel=self.channel_index - 1)
         self.serial_thread = QThread()
         self.serial_worker.moveToThread(self.serial_thread)
         self.serial_worker.slave_data_received.connect(self.update_slave_data)
@@ -2547,16 +2567,16 @@ class ChannelPanel(QWidget):
         self.has_received_data = False
         print(f"[{self.channel_name}] Disconnected")
 
-    @pyqtSlot(int, float, float, bool, str)
-    def update_slave_data(self, slave_id, current, temp, dab_ok, timestamp):
+    @pyqtSlot(int, int, float, float, bool, str)
+    def update_slave_data(self, channel, slave_id, current, temp, dab_ok, timestamp):
         if not self.connected:
             return
         self.packet_count += 1
         self.add_slave_module(slave_id, current, temp, dab_ok, timestamp)
         self.update_stats()
 
-    @pyqtSlot(float, str)
-    def update_system_voltage(self, voltage, timestamp):
+    @pyqtSlot(int, float, str)
+    def update_system_voltage(self, channel, voltage, timestamp):
         if not self.connected:
             return
         self.system_voltage = voltage
